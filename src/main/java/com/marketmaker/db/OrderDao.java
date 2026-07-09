@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -18,6 +19,25 @@ import java.util.List;
  * See {@code src/main/resources/schema.sql} for the table definition.
  */
 public class OrderDao {
+
+    /**
+     * Wipes every row from both {@code trades} and {@code orders} — used by
+     * the full-reset API ({@code DELETE /api/orders}), so testing doesn't
+     * require manually running SQL. {@code trades} has a foreign key onto
+     * {@code orders}, so MySQL normally refuses to truncate {@code orders}
+     * while any row anywhere still references it; foreign key checks are
+     * disabled just for this one operation and switched back on immediately
+     * after.
+     */
+    public void deleteAllOrdersAndTrades() throws SQLException {
+        try (Connection conn = DbConnectionManager.getConnection();
+             Statement st = conn.createStatement()) {
+            st.execute("SET FOREIGN_KEY_CHECKS = 0");
+            st.execute("TRUNCATE TABLE trades");
+            st.execute("TRUNCATE TABLE orders");
+            st.execute("SET FOREIGN_KEY_CHECKS = 1");
+        }
+    }
 
     /** Inserts a brand-new order row. */
     public void insert(Order order) throws SQLException {
@@ -47,6 +67,25 @@ public class OrderDao {
             ps.setInt(1, order.getRemainingQuantity());
             ps.setString(2, order.getStatus().name());
             ps.setString(3, order.getId());
+            ps.executeUpdate();
+        }
+    }
+
+    /**
+     * Updates every mutable field of an order: price, original/remaining
+     * quantity, and status. Used after a PUT edit (which may change price
+     * and/or quantity outright) has been re-matched, and after a DELETE
+     * cancellation.
+     */
+    public void updateOrderDetails(Order order) throws SQLException {
+        String sql = "UPDATE orders SET price = ?, original_quantity = ?, remaining_quantity = ?, status = ? WHERE id = ?";
+        try (Connection conn = DbConnectionManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setBigDecimal(1, order.getPrice());
+            ps.setInt(2, order.getOriginalQuantity());
+            ps.setInt(3, order.getRemainingQuantity());
+            ps.setString(4, order.getStatus().name());
+            ps.setString(5, order.getId());
             ps.executeUpdate();
         }
     }
@@ -127,6 +166,7 @@ public class OrderDao {
         int remainingQuantity = rs.getInt("remaining_quantity");
         LocalDateTime orderTime = rs.getTimestamp("order_time").toLocalDateTime();
         long sequence = rs.getLong("sequence_no");
-        return Order.rehydrate(id, type, produce, price, originalQuantity, remainingQuantity, orderTime, sequence);
+        String status = rs.getString("status");
+        return Order.rehydrate(id, type, produce, price, originalQuantity, remainingQuantity, orderTime, sequence, status);
     }
 }
