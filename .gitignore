@@ -5,3 +5,5 @@ target/
 .vscode/
 .DS_Store
 db.properties.local
+input.txt
+part3-4.patch
