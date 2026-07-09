@@ -15,10 +15,18 @@ public class Order {
     private final String id;
     private final OrderType type;
     private final String produce;
-    private final BigDecimal price;
-    private final int originalQuantity;
+    private BigDecimal price;
+    private int originalQuantity;
     private int remainingQuantity;
     private final LocalDateTime orderTime;
+
+    /**
+     * True once the order's remaining (unmatched) quantity has been withdrawn
+     * via DELETE, before it could be fully matched. Kept separate from the
+     * quantity fields so a cancelled order can still report exactly how much
+     * of it (if any) was matched into trades before cancellation.
+     */
+    private boolean cancelled = false;
 
     /**
      * Monotonically increasing sequence number assigned at ingestion time.
@@ -46,11 +54,14 @@ public class Order {
      */
     public static Order rehydrate(String id, OrderType type, String produce, BigDecimal price,
                                    int originalQuantity, int remainingQuantity,
-                                   LocalDateTime orderTime, long sequence) {
+                                   LocalDateTime orderTime, long sequence, String persistedStatus) {
         Order order = new Order(id, type, produce, price, originalQuantity, orderTime, sequence);
         int alreadyMatched = originalQuantity - remainingQuantity;
         if (alreadyMatched > 0) {
             order.reduceQuantity(alreadyMatched);
+        }
+        if (OrderStatus.CANCELLED.name().equals(persistedStatus)) {
+            order.cancelled = true;
         }
         return order;
     }
@@ -69,8 +80,40 @@ public class Order {
         return remainingQuantity == 0;
     }
 
+    /**
+     * Withdraws whatever quantity is still unmatched (used by DELETE).
+     * Quantity already locked into trades before this call is untouched.
+     * Safe to call on an order with remainingQuantity == 0, though callers
+     * should generally check {@link #getStatus()} first and reject that case
+     * with a clearer error (nothing left to cancel).
+     */
+    public void cancelRemaining() {
+        if (remainingQuantity > 0) {
+            reduceQuantity(remainingQuantity);
+        }
+        this.cancelled = true;
+    }
+
+    public boolean isCancelled() {
+        return cancelled;
+    }
+
+    /**
+     * Replaces this order's price and quantity (used by PUT). Only valid to
+     * call while the order is still {@code PENDING} (nothing matched yet) —
+     * callers must enforce that themselves before calling this, since this
+     * method does not re-check it.
+     */
+    public void updateForEdit(BigDecimal newPrice, int newQuantity) {
+        this.price = newPrice;
+        this.originalQuantity = newQuantity;
+        this.remainingQuantity = newQuantity;
+    }
+
     public OrderStatus getStatus() {
-        if (remainingQuantity == originalQuantity) {
+        if (cancelled) {
+            return OrderStatus.CANCELLED;
+        } else if (remainingQuantity == originalQuantity) {
             return OrderStatus.PENDING;
         } else if (remainingQuantity == 0) {
             return OrderStatus.FILLED;

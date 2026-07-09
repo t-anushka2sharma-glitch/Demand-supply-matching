@@ -133,6 +133,58 @@ public class MatchingEngine {
         return ordersById.get(orderId);
     }
 
+    /**
+     * Wipes the entire in-memory ledger and order history — used by the
+     * full-reset API ({@code DELETE /api/orders}) alongside clearing the
+     * database, so the engine and the DB stay in sync after a reset.
+     */
+    public void reset() {
+        supplyLedger.clear();
+        demandLedger.clear();
+        ordersById.clear();
+    }
+
+    /**
+     * Removes an order from its produce ledger without changing its
+     * quantities or status — used by PUT when editing a still-PENDING
+     * order's price/quantity: pull it out, mutate it, then {@link #submit}
+     * it again so it re-enters the ledger (if anything's left unmatched)
+     * and gets a fresh chance to match under its new price/quantity.
+     *
+     * @return true if the order was found and removed from its ledger list
+     */
+    public boolean withdrawForUpdate(String orderId) {
+        Order order = ordersById.get(orderId);
+        if (order == null) {
+            return false;
+        }
+        Map<String, List<Order>> ledger = order.getType() == OrderType.SUPPLY ? supplyLedger : demandLedger;
+        List<Order> list = ledger.get(order.getProduce());
+        return list != null && list.remove(order);
+    }
+
+    /**
+     * Cancels an order's remaining (unmatched) quantity (used by DELETE) and
+     * removes it from its ledger so it's no longer considered for future
+     * matches. Quantity already matched into trades before this call is
+     * untouched and remains part of trade history.
+     *
+     * @return the cancelled order, or {@code null} if the id is unknown
+     */
+    public Order cancelOrder(String orderId) {
+        Order order = ordersById.get(orderId);
+        if (order == null) {
+            return null;
+        }
+        Map<String, List<Order>> ledger = order.getType() == OrderType.SUPPLY ? supplyLedger : demandLedger;
+        List<Order> list = ledger.get(order.getProduce());
+        if (list != null) {
+            list.remove(order);
+        }
+        order.cancelRemaining();
+        return order;
+    }
+
     /** Re-hydrates the ledger with a previously-persisted, still-open order (used by Part 2 on startup). */
     public void loadExistingOpenOrder(Order order) {
         ordersById.put(order.getId(), order);
