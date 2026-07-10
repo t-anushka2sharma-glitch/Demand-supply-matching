@@ -7,3 +7,4 @@ target/
 db.properties.local
 input.txt
 part3-4.patch
+src/main/resources/db.properties

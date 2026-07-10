@@ -1,4 +1,4 @@
 db.driver=com.mysql.cj.jdbc.Driver
 db.url=jdbc:mysql://localhost:3306/demand_supply_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
 db.username=root
-db.password=root
+db.password=mysql@1785
